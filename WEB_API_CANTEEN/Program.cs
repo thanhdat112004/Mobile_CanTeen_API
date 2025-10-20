@@ -3,8 +3,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using WEB_API_CANTEEN.Models; // DbContext sinh từ scaffold
-
+using WEB_API_CANTEEN.Services;
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 
 // 1) DbContext
 builder.Services.AddDbContext<SmartCanteenDbContext>(options =>
