@@ -21,19 +21,22 @@ namespace WEB_API_CANTEEN.Controllers
         [HttpGet("categories")]
         public IActionResult Categories()
         {
-            var cats = _ctx.Items
-                           .Where(i => !string.IsNullOrEmpty(i.Category))
-                           .Select(i => i.Category!)
-                           .Distinct()
-                           .OrderBy(x => x)
-                           .Select((name, idx) => new { // tạo id tạm nếu cần
-                               Id = idx + 1,
-                               Name = name
-                           })
-                           .ToList();
+            // 1) Lấy distinct tên category từ DB (EF có thể dịch)
+            var names = _ctx.Items
+                .Where(i => i.Category != null && i.Category != "") // tránh IsNullOrEmpty để EF dễ dịch
+                .Select(i => i.Category!)
+                .Distinct()
+                .OrderBy(x => x)
+                .ToList();
+
+            // 2) Đánh số thứ tự ở bộ nhớ (không bắt EF dịch)
+            var cats = names
+                .Select((name, idx) => new { Id = idx + 1, Name = name })
+                .ToList();
 
             return Ok(cats);
         }
+
 
         // GET /api/menu/items?category=&q=&availableOnly=true&sort=name|price&order=asc|desc&page=1&pageSize=20
         // Danh sách món có lọc + phân trang (lọc theo tên category dạng string)

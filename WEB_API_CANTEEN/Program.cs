@@ -55,7 +55,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-
+app.UseStaticFiles(); // để truy cập /img/<file>
 app.UseHttpsRedirection();
 app.UseCors("AllowAll");
 app.UseAuthentication();
