@@ -6,6 +6,10 @@ using WEB_API_CANTEEN.Models; // DbContext sinh từ scaffold
 using WEB_API_CANTEEN.Services;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
+// ... các AddDbContext, AddAuthentication, AddControllers, AddSwaggerGen, v.v.
+builder.Services.Configure<WEB_API_CANTEEN.Services.OrderCleanupOptions>(
+    builder.Configuration.GetSection("OrderCleanup"));
+builder.Services.AddHostedService<WEB_API_CANTEEN.Services.OrderCleanupService>();
 
 // 1) DbContext
 builder.Services.AddDbContext<SmartCanteenDbContext>(options =>
