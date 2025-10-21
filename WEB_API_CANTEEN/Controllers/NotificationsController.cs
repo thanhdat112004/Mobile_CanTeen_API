@@ -1,7 +1,8 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Security.Claims;
+using Microsoft.EntityFrameworkCore;
 using WEB_API_CANTEEN.Models;
+using WEB_API_CANTEEN.Services;
 
 namespace WEB_API_CANTEEN.Controllers
 {
@@ -11,67 +12,66 @@ namespace WEB_API_CANTEEN.Controllers
     public class NotificationsController : ControllerBase
     {
         private readonly SmartCanteenDbContext _ctx;
-        public NotificationsController(SmartCanteenDbContext ctx) => _ctx = ctx;
-
-        // GET /api/notifications?onlyUnread=false&page=1&pageSize=20
-        [HttpGet]
-        public IActionResult List([FromQuery] bool onlyUnread = false, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+        private readonly IAuditService _audit;
+        public NotificationsController(SmartCanteenDbContext ctx, IAuditService audit)
         {
-            var uid = long.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            page = page <= 0 ? 1 : page;
-            pageSize = Math.Clamp(pageSize, 1, 200);
-
-            var q = _ctx.UserNotifications.Where(n => n.UserId == uid);
-            if (onlyUnread) q = q.Where(n => !n.IsRead);
-
-            var total = q.Count();
-            var data = q.OrderByDescending(n => n.CreatedAt)
-                        .Skip((page - 1) * pageSize)
-                        .Take(pageSize)
-                        .Select(n => new {
-                            n.Id,
-                            n.Title,
-                            n.Body,
-                            n.Type,
-                            n.ReferenceId,
-                            n.IsRead,
-                            n.CreatedAt
-                        }).ToList();
-
-            return Ok(new { page, pageSize, total, data });
+            _ctx = ctx; _audit = audit;
         }
 
-        // GET /api/notifications/unread-count
+        private long CurrentUserId() =>
+            long.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)!.Value);
+
+        [HttpGet("me")]
+        public IActionResult MyNotifications([FromQuery] bool unreadOnly = false, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+        {
+            var uid = CurrentUserId();
+            page = Math.Max(1, page); pageSize = Math.Clamp(pageSize, 1, 100);
+
+            var q = _ctx.UserNotifications.AsNoTracking().Where(x => x.UserId == uid);
+            if (unreadOnly) q = q.Where(x => !x.IsRead);
+
+            var total = q.Count();
+            var items = q.OrderByDescending(x => x.CreatedAt)
+                         .Skip((page - 1) * pageSize)
+                         .Take(pageSize)
+                         .Select(x => new { x.Id, x.Title, x.Body, x.Type, x.ReferenceId, x.IsRead, x.CreatedAt })
+                         .ToList();
+
+            return Ok(new { page, pageSize, total, items });
+        }
+
         [HttpGet("unread-count")]
         public IActionResult UnreadCount()
         {
-            var uid = long.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var count = _ctx.UserNotifications.Count(n => n.UserId == uid && !n.IsRead);
-            return Ok(new { count });
+            var uid = CurrentUserId();
+            var cnt = _ctx.UserNotifications.Count(x => x.UserId == uid && !x.IsRead);
+            return Ok(new { unread = cnt });
         }
 
-        // PATCH /api/notifications/{id}/read
         [HttpPatch("{id:long}/read")]
         public IActionResult MarkRead(long id)
         {
-            var uid = long.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var noti = _ctx.UserNotifications.FirstOrDefault(n => n.Id == id && n.UserId == uid);
+            var uid = CurrentUserId();
+            var noti = _ctx.UserNotifications.FirstOrDefault(x => x.Id == id && x.UserId == uid);
             if (noti == null) return NotFound();
-
-            noti.IsRead = true;
-            _ctx.SaveChanges();
+            if (!noti.IsRead)
+            {
+                noti.IsRead = true;
+                _ctx.SaveChanges();
+                _audit.Log(uid, "NOTI_READ", "UserNotification", id);
+            }
             return NoContent();
         }
 
-        // PATCH /api/notifications/read-all
-        [HttpPatch("read-all")]
+        [HttpPost("read-all")]
         public IActionResult MarkAllRead()
         {
-            var uid = long.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-            var notis = _ctx.UserNotifications.Where(n => n.UserId == uid && !n.IsRead).ToList();
-            foreach (var n in notis) n.IsRead = true;
+            var uid = CurrentUserId();
+            var list = _ctx.UserNotifications.Where(x => x.UserId == uid && !x.IsRead).ToList();
+            foreach (var n in list) n.IsRead = true;
             _ctx.SaveChanges();
-            return NoContent();
+            _audit.Log(uid, "NOTI_READ_ALL", "UserNotification");
+            return Ok(new { updated = list.Count });
         }
     }
 }
