@@ -11,6 +11,8 @@ public partial class User
 
     public string Username { get; set; } = null!;
 
+    public string? Email { get; set; }
+
     public string? PasswordHash { get; set; }
 
     public string? Mssv { get; set; }
@@ -28,8 +30,6 @@ public partial class User
     public bool IsActive { get; set; }
 
     public DateTime CreatedAt { get; set; }
-
-    // ❌ BỎ: public virtual ICollection<AuditLog1> AuditLog1s { get; set; } = new List<AuditLog1>();
 
     public virtual ICollection<AuditLog> AuditLogs { get; set; } = new List<AuditLog>();
 

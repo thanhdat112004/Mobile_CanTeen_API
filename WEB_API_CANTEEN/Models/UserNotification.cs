@@ -9,11 +9,11 @@ public partial class UserNotification
 
     public long UserId { get; set; }
 
+    public string? Type { get; set; }
+
     public string Title { get; set; } = null!;
 
     public string Body { get; set; } = null!;
-
-    public string Type { get; set; } = null!;
 
     public long? ReferenceId { get; set; }
 

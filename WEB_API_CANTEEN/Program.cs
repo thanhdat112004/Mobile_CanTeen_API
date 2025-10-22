@@ -11,6 +11,9 @@ builder.Services.Configure<WEB_API_CANTEEN.Services.OrderCleanupOptions>(
     builder.Configuration.GetSection("OrderCleanup"));
 builder.Services.AddHostedService<WEB_API_CANTEEN.Services.OrderCleanupService>();
 builder.Services.AddScoped<WEB_API_CANTEEN.Services.IAuditService, WEB_API_CANTEEN.Services.AuditService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddSingleton<IOtpService, OtpService>();
 
 // 1) DbContext
 builder.Services.AddDbContext<SmartCanteenDbContext>(options =>

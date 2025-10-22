@@ -9,15 +9,15 @@ public partial class PointsLedger
 
     public long UserId { get; set; }
 
+    public long? OrderId { get; set; }
+
     public int Delta { get; set; }
+
+    public int? Points { get; set; }
 
     public string? Reason { get; set; }
 
-    public long? OrderId { get; set; }
-
     public DateTime CreatedAt { get; set; }
-
-    public int Points { get; set; }
 
     public virtual Order? Order { get; set; }
 

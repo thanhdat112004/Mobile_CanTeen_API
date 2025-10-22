@@ -9,17 +9,17 @@ public partial class Item
 
     public string Name { get; set; } = null!;
 
-    public string? Category { get; set; }
-
     public decimal Price { get; set; }
-
-    public bool IsAvailableToday { get; set; }
 
     public string? ImageUrl { get; set; }
 
-    public DateTime CreatedAt { get; set; }
-
     public long CategoryId { get; set; }
+
+    public string? Category { get; set; }
+
+    public bool IsAvailableToday { get; set; }
+
+    public DateTime CreatedAt { get; set; }
 
     public virtual Category CategoryNavigation { get; set; } = null!;
 

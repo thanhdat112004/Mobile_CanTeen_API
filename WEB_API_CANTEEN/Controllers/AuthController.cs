@@ -1,14 +1,15 @@
-﻿// AuthController: Đăng ký, Đăng nhập, Quên/Đặt lại mật khẩu (in-memory), Logout, phát hành JWT
+﻿// AuthController: Flow OTP Gating cho Đăng ký & Quên mật khẩu + Login bằng email/username
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using System.Collections.Concurrent;
 using System.ComponentModel.DataAnnotations;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using WEB_API_CANTEEN.Models;
+using WEB_API_CANTEEN.Services;
 
 namespace WEB_API_CANTEEN.Controllers
 {
@@ -18,106 +19,197 @@ namespace WEB_API_CANTEEN.Controllers
     {
         private readonly SmartCanteenDbContext _ctx;
         private readonly IConfiguration _cfg;
+        private readonly IEmailService _email;
+        private readonly IOtpService _otp;
 
-        // Lưu OTP reset mật khẩu trong bộ nhớ tạm: key = username
-        private static readonly ConcurrentDictionary<string, (string Code, DateTime ExpireAt)> _resetStore = new();
-
-        public AuthController(SmartCanteenDbContext ctx, IConfiguration cfg)
+        public AuthController(
+            SmartCanteenDbContext ctx,
+            IConfiguration cfg,
+            IEmailService email,
+            IOtpService otp)
         {
             _ctx = ctx;
             _cfg = cfg;
+            _email = email;
+            _otp = otp;
         }
 
-        // POST /api/auth/register
-        // Tạo tài khoản mới -> Role mặc định USER. Lưu đầy đủ Phone, Mssv, Class, Allergies, Preferences nếu gửi lên.
-        [HttpPost("register")]
-        public IActionResult Register([FromBody] RegisterRequest req)
+        // =========================
+        // 1) ĐĂNG KÝ (Bước 1): Gửi OTP
+        // =========================
+        // Body: { "email": "a@b.com" }
+        [AllowAnonymous]
+        [HttpPost("register/request-otp")]
+        public async Task<IActionResult> RegisterRequestOtp([FromBody] RegisterRequestOtpDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.Email) || !new EmailAddressAttribute().IsValid(dto.Email))
+                return BadRequest("Email không hợp lệ.");
+
+            // Email chưa được sử dụng
+            var exists = await _ctx.Users.AnyAsync(u => u.Email == dto.Email);
+            if (exists) return Conflict("Email đã tồn tại.");
+
+            var key = $"register:{dto.Email}";
+            if (!_otp.CanSend(key)) return StatusCode(429, "Vui lòng thử lại sau ít phút.");
+
+            var code = _otp.GenerateAndSave(key);
+
+            var ttl = _cfg["Otp:TtlMinutes"] ?? "5";
+            var html = $@"<p>Mã OTP đăng ký Smart Canteen của bạn là:
+                          <b style=""font-size:18px"">{code}</b></p>
+                          <p>Hiệu lực trong {ttl} phút.</p>";
+
+            await _email.SendAsync(dto.Email, "[Smart Canteen] OTP đăng ký", html);
+            return Ok(new { message = "Đã gửi OTP tới email." });
+        }
+
+        // =========================
+        // 2) ĐĂNG KÝ (Bước 2): Xác nhận OTP + Tạo tài khoản
+        // =========================
+        // Body:
+        // {
+        //   "email":"a@b.com","code":"123456",
+        //   "username":"sv001","password":"Abc@12345",
+        //   "fullName":"Nguyen Van A","phone":"090...", "mssv":"...", "class":"...",
+        //   "allergies":"...", "preferences":"..."
+        // }
+        [AllowAnonymous]
+        [HttpPost("register/confirm")]
+        public async Task<IActionResult> RegisterConfirm([FromBody] RegisterConfirmDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
-            if (_ctx.Users.Any(u => u.Username == req.Username))
-                return Conflict("Username đã tồn tại");
+            // Verify OTP
+            var key = $"register:{dto.Email}";
+            if (!_otp.Verify(key, dto.Code)) return BadRequest("OTP không hợp lệ hoặc đã hết hạn.");
+
+            // Kiểm tra trùng username/email
+            if (await _ctx.Users.AnyAsync(u => u.Username == dto.Username))
+                return Conflict("Username đã tồn tại.");
+            if (await _ctx.Users.AnyAsync(u => u.Email == dto.Email))
+                return Conflict("Email đã tồn tại.");
 
             var user = new User
             {
-                Username = req.Username,
-                Name = string.IsNullOrWhiteSpace(req.FullName) ? req.Username : req.FullName!,
-                PasswordHash = Sha256(req.Password),
-                Phone = req.Phone,
-                Mssv = req.Mssv,
-                Class = req.Class,
-                Allergies = req.Allergies,
-                Preferences = req.Preferences,
-                Role = "USER",            // 🔒 mặc định USER
+                Username = dto.Username.Trim(),
+                Name = string.IsNullOrWhiteSpace(dto.FullName) ? dto.Username.Trim() : dto.FullName!.Trim(),
+                Email = dto.Email.Trim(),
+                PasswordHash = Sha256(dto.Password),
+                Phone = dto.Phone,
+                Mssv = dto.Mssv,
+                Class = dto.Class,
+                Allergies = dto.Allergies,
+                Preferences = dto.Preferences,
+                Role = "USER",
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
             };
 
             _ctx.Users.Add(user);
-            _ctx.SaveChanges();
+            await _ctx.SaveChangesAsync();
 
             var token = GenerateJwt(user);
-            return Ok(new { message = "Đăng ký thành công", token, role = user.Role, username = user.Username });
+            return Ok(new
+            {
+                message = "Đăng ký thành công",
+                token,
+                username = user.Username,
+                email = user.Email,
+                role = user.Role
+            });
         }
 
-        // POST /api/auth/login
+        // =========================
+        // 3) QUÊN MẬT KHẨU (B1): Gửi OTP
+        // =========================
+        // Body: { "usernameOrEmail": "sv001 hoặc a@b.com" }
+        [AllowAnonymous]
+        [HttpPost("reset/request-otp")]
+        public async Task<IActionResult> ResetRequestOtp([FromBody] ResetRequestOtpDto dto)
+        {
+            var id = dto.UsernameOrEmail?.Trim() ?? string.Empty;
+            if (string.IsNullOrEmpty(id)) return BadRequest("Thiếu usernameOrEmail.");
+
+            var user = await _ctx.Users
+                .FirstOrDefaultAsync(u => u.Username == id || (u.Email != null && u.Email == id));
+
+            if (user == null) return NotFound("Không tìm thấy tài khoản.");
+
+            // cần có email để nhận OTP
+            var email = user.Email;
+            if (string.IsNullOrWhiteSpace(email))
+                return BadRequest("Tài khoản chưa có email để nhận OTP.");
+
+            var key = $"reset:{email}";
+            if (!_otp.CanSend(key)) return StatusCode(429, "Vui lòng thử lại sau ít phút.");
+
+            var code = _otp.GenerateAndSave(key);
+            var ttl = _cfg["Otp:TtlMinutes"] ?? "5";
+            var html = $@"<p>Mã OTP đặt lại mật khẩu của bạn là:
+                          <b style=""font-size:18px"">{code}</b></p>
+                          <p>Hiệu lực trong {ttl} phút.</p>";
+
+            await _email.SendAsync(email!, "[Smart Canteen] OTP đặt lại mật khẩu", html);
+            return Ok(new { message = "Đã gửi OTP đặt lại mật khẩu." });
+        }
+
+        // =========================
+        // 4) QUÊN MẬT KHẨU (B2): Xác nhận OTP + Đặt mật khẩu mới
+        // =========================
+        // Body: { "usernameOrEmail": "...", "code": "123456", "newPassword": "Abc@12345" }
+        [AllowAnonymous]
+        [HttpPost("reset/confirm")]
+        public async Task<IActionResult> ResetConfirm([FromBody] ResetConfirmDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
+            var id = dto.UsernameOrEmail?.Trim() ?? string.Empty;
+
+            var user = await _ctx.Users
+                .FirstOrDefaultAsync(u => u.Username == id || (u.Email != null && u.Email == id));
+            if (user == null) return NotFound("Không tìm thấy tài khoản.");
+
+            var email = user.Email ?? id;
+            var key = $"reset:{email}";
+            if (!_otp.Verify(key, dto.Code)) return BadRequest("OTP không hợp lệ hoặc đã hết hạn.");
+
+            user.PasswordHash = Sha256(dto.NewPassword);
+            await _ctx.SaveChangesAsync();
+
+            return Ok(new { message = "Đổi mật khẩu thành công." });
+        }
+
+        // =========================
+        // 5) ĐĂNG NHẬP (email hoặc username)
+        // =========================
+        // Body: { "usernameOrEmail": "...", "password": "..." }
+        [AllowAnonymous]
         [HttpPost("login")]
-        public IActionResult Login([FromBody] LoginRequest req)
+        public async Task<IActionResult> Login([FromBody] LoginDto dto)
         {
-            var user = _ctx.Users.FirstOrDefault(u => u.Username == req.Username);
-            if (user == null) return Unauthorized("Sai tài khoản hoặc mật khẩu");
+            var id = dto.UsernameOrEmail?.Trim() ?? string.Empty;
 
-            // Hỗ trợ dữ liệu cũ nếu PasswordHash đang là plain
-            var ok = user.PasswordHash == Sha256(req.Password) || user.PasswordHash == req.Password;
-            if (!ok) return Unauthorized("Sai tài khoản hoặc mật khẩu");
+            var user = await _ctx.Users.FirstOrDefaultAsync(u =>
+                u.Username == id || (u.Email != null && u.Email == id));
+            if (user == null) return Unauthorized("Sai tài khoản hoặc mật khẩu.");
+
+            var ok = user.PasswordHash == Sha256(dto.Password) || user.PasswordHash == dto.Password;
+            if (!ok) return Unauthorized("Sai tài khoản hoặc mật khẩu.");
+
+            if (!user.IsActive) return Forbid("Tài khoản đang bị khóa.");
 
             var token = GenerateJwt(user);
-            return Ok(new { token, role = user.Role, username = user.Username });
+            return Ok(new { token, username = user.Username, email = user.Email, role = user.Role });
         }
 
-        // POST /api/auth/forgot-password
-        // Sinh mã 6 ký tự, lưu in-memory 10 phút (đồ án không cần SMTP)
-        [HttpPost("forgot-password")]
-        public IActionResult ForgotPassword([FromBody] ForgotPasswordRequest req)
-        {
-            var user = _ctx.Users.FirstOrDefault(u => u.Username == req.Username);
-            if (user == null) return NotFound("Không tìm thấy người dùng");
-
-            var code = Guid.NewGuid().ToString("N")[..6].ToUpper();
-            var expire = DateTime.UtcNow.AddMinutes(10);
-            _resetStore.AddOrUpdate(user.Username, (code, expire), (_, __) => (code, expire));
-
-            return Ok(new { message = "Đã tạo mã khôi phục", username = user.Username, resetCode = code, expireAt = expire });
-        }
-
-        // POST /api/auth/reset-password
-        [HttpPost("reset-password")]
-        public IActionResult ResetPassword([FromBody] ResetPasswordRequest req)
-        {
-            var user = _ctx.Users.FirstOrDefault(u => u.Username == req.Username);
-            if (user == null) return NotFound("Không tìm thấy người dùng");
-
-            if (!_resetStore.TryGetValue(user.Username, out var e))
-                return BadRequest("Chưa yêu cầu khôi phục");
-            if (e.ExpireAt < DateTime.UtcNow) return BadRequest("Mã đã hết hạn");
-            if (!string.Equals(e.Code, req.ResetCode, StringComparison.OrdinalIgnoreCase))
-                return BadRequest("Mã không đúng");
-
-            user.PasswordHash = Sha256(req.NewPassword);
-            _ctx.SaveChanges();
-
-            _resetStore.TryRemove(user.Username, out _);
-            return Ok(new { message = "Đặt lại mật khẩu thành công" });
-        }
-
-        // POST /api/auth/logout
-        // JWT là stateless -> client chỉ cần xoá token. Endpoint này trả OK cho luồng UI.
+        // =========================
+        // 6) ĐĂNG XUẤT (client xóa token)
+        // =========================
         [Authorize]
         [HttpPost("logout")]
-        public IActionResult Logout() => Ok(new { message = "Logged out. Please remove token on client." });
+        public IActionResult Logout() => Ok(new { message = "Đã đăng xuất (hãy xóa token phía client)." });
 
-        // ================= Helpers =================
-
+        // ============= Helpers =============
         private string GenerateJwt(User user)
         {
             var claims = new[]
@@ -127,25 +219,21 @@ namespace WEB_API_CANTEEN.Controllers
                 new Claim(ClaimTypes.Role, user.Role ?? "USER")
             };
 
-            // Hỗ trợ key dạng base64:... hoặc chuỗi thường, và kiểm tra độ dài >= 32 bytes
             var keyConfig = _cfg["Jwt:Key"] ?? throw new InvalidOperationException("Missing Jwt:Key");
             byte[] keyBytes = keyConfig.StartsWith("base64:", StringComparison.OrdinalIgnoreCase)
                 ? Convert.FromBase64String(keyConfig["base64:".Length..])
                 : Encoding.UTF8.GetBytes(keyConfig);
-
             if (keyBytes.Length < 32)
-                throw new InvalidOperationException("Jwt:Key must be at least 32 bytes (256 bits) for HS256.");
+                throw new InvalidOperationException("Jwt:Key must be at least 32 bytes.");
 
-            var key = new SymmetricSecurityKey(keyBytes);
-            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            var creds = new SigningCredentials(new SymmetricSecurityKey(keyBytes), SecurityAlgorithms.HmacSha256);
 
             var token = new JwtSecurityToken(
                 issuer: _cfg["Jwt:Issuer"],
                 audience: _cfg["Jwt:Audience"],
                 claims: claims,
                 expires: DateTime.UtcNow.AddMinutes(int.Parse(_cfg["Jwt:ExpireMinutes"] ?? "120")),
-                signingCredentials: creds
-            );
+                signingCredentials: creds);
 
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
@@ -160,35 +248,41 @@ namespace WEB_API_CANTEEN.Controllers
         }
     }
 
-    // ================= DTOs =================
-
-    public class RegisterRequest
+    // ============= DTOs =============
+    public class RegisterRequestOtpDto
     {
+        [Required, EmailAddress] public string Email { get; set; } = "";
+    }
+
+    public class RegisterConfirmDto
+    {
+        [Required, EmailAddress] public string Email { get; set; } = "";
+        [Required] public string Code { get; set; } = "";
         [Required, MinLength(3)] public string Username { get; set; } = "";
         [Required, MinLength(6)] public string Password { get; set; } = "";
-        [MaxLength(120)] public string? FullName { get; set; }
-        [MaxLength(20)] public string? Phone { get; set; }
-        [MaxLength(30)] public string? Mssv { get; set; }
-        [MaxLength(30)] public string? Class { get; set; }
-        [MaxLength(255)] public string? Allergies { get; set; }
-        [MaxLength(255)] public string? Preferences { get; set; }
+        public string? FullName { get; set; }
+        public string? Phone { get; set; }
+        public string? Mssv { get; set; }
+        public string? Class { get; set; }
+        public string? Allergies { get; set; }
+        public string? Preferences { get; set; }
     }
 
-    public class LoginRequest
+    public class ResetRequestOtpDto
     {
-        [Required] public string Username { get; set; } = "";
-        [Required] public string Password { get; set; } = "";
+        [Required] public string UsernameOrEmail { get; set; } = "";
     }
 
-    public class ForgotPasswordRequest
+    public class ResetConfirmDto
     {
-        [Required] public string Username { get; set; } = "";
-    }
-
-    public class ResetPasswordRequest
-    {
-        [Required] public string Username { get; set; } = "";
-        [Required] public string ResetCode { get; set; } = "";
+        [Required] public string UsernameOrEmail { get; set; } = "";
+        [Required] public string Code { get; set; } = "";
         [Required, MinLength(6)] public string NewPassword { get; set; } = "";
+    }
+
+    public class LoginDto
+    {
+        [Required] public string UsernameOrEmail { get; set; } = "";
+        [Required] public string Password { get; set; } = "";
     }
 }

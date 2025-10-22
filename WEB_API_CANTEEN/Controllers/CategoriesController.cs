@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.ComponentModel.DataAnnotations;
+using System.Linq;
 using WEB_API_CANTEEN.Models;
 
 namespace WEB_API_CANTEEN.Controllers
@@ -14,7 +15,6 @@ namespace WEB_API_CANTEEN.Controllers
         public CategoriesController(SmartCanteenDbContext ctx) => _ctx = ctx;
 
         // GET /api/categories?includeInactive=false
-        // => Danh sách danh mục (mặc định chỉ lấy đang active)
         [HttpGet]
         public IActionResult List([FromQuery] bool includeInactive = false)
         {
@@ -26,12 +26,30 @@ namespace WEB_API_CANTEEN.Controllers
                         {
                             Id = x.Id,
                             Name = x.Name,
-                            SortOrder = x.SortOrder,
+                            SortOrder = x.SortOrder ?? 0,   // map int? -> int
                             IsActive = x.IsActive
                         })
                         .ToList();
 
             return Ok(data);
+        }
+
+        // GET /api/categories/{id}
+        [HttpGet("{id:long}")]
+        public IActionResult GetById(long id)
+        {
+            var c = _ctx.Categories
+                        .Where(x => x.Id == id)
+                        .Select(x => new CategoryDto
+                        {
+                            Id = x.Id,
+                            Name = x.Name,
+                            SortOrder = x.SortOrder ?? 0,
+                            IsActive = x.IsActive
+                        })
+                        .FirstOrDefault();
+
+            return c is null ? NotFound() : Ok(c);
         }
 
         // POST /api/categories  (ADMIN)
@@ -41,12 +59,13 @@ namespace WEB_API_CANTEEN.Controllers
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
 
-            if (_ctx.Categories.Any(c => c.Name == dto.Name))
+            var name = dto.Name.Trim();
+            if (_ctx.Categories.Any(c => c.Name.ToLower() == name.ToLower()))
                 return Conflict("Tên danh mục đã tồn tại");
 
             var cat = new Category
             {
-                Name = dto.Name,
+                Name = name,
                 SortOrder = dto.SortOrder ?? 0,
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
@@ -68,10 +87,13 @@ namespace WEB_API_CANTEEN.Controllers
 
             if (!string.IsNullOrWhiteSpace(dto.Name))
             {
-                if (_ctx.Categories.Any(c => c.Id != id && c.Name == dto.Name))
-                    return Conflict("Tên danh mục đã tồn tại");
-                cat.Name = dto.Name!;
+                var newName = dto.Name.Trim();
+                var exists = _ctx.Categories
+                                 .Any(c => c.Id != id && c.Name.ToLower() == newName.ToLower());
+                if (exists) return Conflict("Tên danh mục đã tồn tại");
+                cat.Name = newName;
             }
+
             if (dto.SortOrder.HasValue) cat.SortOrder = dto.SortOrder.Value;
             if (dto.IsActive.HasValue) cat.IsActive = dto.IsActive.Value;
 

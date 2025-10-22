@@ -9,23 +9,23 @@ public partial class Order
 
     public long UserId { get; set; }
 
-    public decimal Total { get; set; }
-
     public string Status { get; set; } = null!;
-
-    public string? PaymentMethod { get; set; }
 
     public string PaymentStatus { get; set; } = null!;
 
-    public DateTime? PaidAt { get; set; }
+    public string? PaymentMethod { get; set; }
 
     public string? PaymentRef { get; set; }
+
+    public decimal Total { get; set; }
 
     public int? EtaMinutes { get; set; }
 
     public string? Note { get; set; }
 
     public DateTime CreatedAt { get; set; }
+
+    public DateTime? PaidAt { get; set; }
 
     public virtual ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();
 
