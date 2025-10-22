@@ -3,8 +3,17 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using WEB_API_CANTEEN.Models; // DbContext sinh từ scaffold
-
+using WEB_API_CANTEEN.Services;
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddScoped<IInvoiceService, InvoiceService>();
+// ... các AddDbContext, AddAuthentication, AddControllers, AddSwaggerGen, v.v.
+builder.Services.Configure<WEB_API_CANTEEN.Services.OrderCleanupOptions>(
+    builder.Configuration.GetSection("OrderCleanup"));
+builder.Services.AddHostedService<WEB_API_CANTEEN.Services.OrderCleanupService>();
+builder.Services.AddScoped<WEB_API_CANTEEN.Services.IAuditService, WEB_API_CANTEEN.Services.AuditService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddSingleton<IOtpService, OtpService>();
 
 // 1) DbContext
 builder.Services.AddDbContext<SmartCanteenDbContext>(options =>
@@ -54,7 +63,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-
+app.UseStaticFiles(); // để truy cập /img/<file>
 app.UseHttpsRedirection();
 app.UseCors("AllowAll");
 app.UseAuthentication();

@@ -17,6 +17,8 @@ public partial class SmartCanteenDbContext : DbContext
 
     public virtual DbSet<AuditLog> AuditLogs { get; set; }
 
+    public virtual DbSet<Category> Categories { get; set; }
+
     public virtual DbSet<Item> Items { get; set; }
 
     public virtual DbSet<Order> Orders { get; set; }
@@ -35,102 +37,302 @@ public partial class SmartCanteenDbContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
 #warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
-        => optionsBuilder.UseSqlServer("Server=.\\SQLEXPRESS;Database=SmartCanteen;Trusted_Connection=True;TrustServerCertificate=True");
+        => optionsBuilder.UseSqlServer("Server=.\\SQLEXPRESS;Database=SmartCanteen;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False");
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<AuditLog>(entity =>
         {
-            entity.HasKey(e => e.Id).HasName("PK__AuditLog__3213E83F8D6EDF09");
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.Action)
+                .HasMaxLength(50)
+                .HasColumnName("action");
+            entity.Property(e => e.ActorId).HasColumnName("actor_id");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.Detail)
+                .HasMaxLength(1000)
+                .HasColumnName("detail");
+            entity.Property(e => e.Entity)
+                .HasMaxLength(50)
+                .HasColumnName("entity");
+            entity.Property(e => e.EntityId).HasColumnName("entity_id");
 
-            entity.Property(e => e.At).HasDefaultValueSql("(sysutcdatetime())");
+            entity.HasOne(d => d.Actor).WithMany(p => p.AuditLogs)
+                .HasForeignKey(d => d.ActorId)
+                .HasConstraintName("FK_AuditLogs_Users");
+        });
 
-            entity.HasOne(d => d.Actor).WithMany(p => p.AuditLogs).HasConstraintName("FK__AuditLog__actor___5CD6CB2B");
+        modelBuilder.Entity<Category>(entity =>
+        {
+            entity.HasIndex(e => e.Name, "UQ_Categories_Name").IsUnique();
+
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.IsActive)
+                .HasDefaultValue(true)
+                .HasColumnName("is_active");
+            entity.Property(e => e.Name)
+                .HasMaxLength(100)
+                .HasColumnName("name");
+            entity.Property(e => e.SortOrder).HasColumnName("sort_order");
         });
 
         modelBuilder.Entity<Item>(entity =>
         {
-            entity.HasKey(e => e.Id).HasName("PK__Items__3213E83FB09A0904");
+            entity.HasIndex(e => e.CategoryId, "IX_Items_CategoryId");
 
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())");
-            entity.Property(e => e.IsAvailableToday).HasDefaultValue(true);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.Category)
+                .HasMaxLength(50)
+                .HasColumnName("category");
+            entity.Property(e => e.CategoryId).HasColumnName("category_id");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.ImageUrl)
+                .HasMaxLength(255)
+                .HasColumnName("image_url");
+            entity.Property(e => e.IsAvailableToday)
+                .HasDefaultValue(true)
+                .HasColumnName("is_available_today");
+            entity.Property(e => e.Name)
+                .HasMaxLength(120)
+                .HasColumnName("name");
+            entity.Property(e => e.Price)
+                .HasColumnType("decimal(12, 2)")
+                .HasColumnName("price");
+
+            entity.HasOne(d => d.CategoryNavigation).WithMany(p => p.Items)
+                .HasForeignKey(d => d.CategoryId)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_Items_Categories");
         });
 
         modelBuilder.Entity<Order>(entity =>
         {
-            entity.HasKey(e => e.Id).HasName("PK__Orders__3213E83FD30340B4");
+            entity.HasIndex(e => e.UserId, "IX_Orders_UserId");
 
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())");
-            entity.Property(e => e.PaymentStatus).HasDefaultValue("UNPAID");
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.EtaMinutes).HasColumnName("eta_minutes");
+            entity.Property(e => e.Note)
+                .HasMaxLength(255)
+                .HasColumnName("note");
+            entity.Property(e => e.PaidAt).HasColumnName("paid_at");
+            entity.Property(e => e.PaymentMethod)
+                .HasMaxLength(20)
+                .HasColumnName("payment_method");
+            entity.Property(e => e.PaymentRef)
+                .HasMaxLength(100)
+                .HasColumnName("payment_ref");
+            entity.Property(e => e.PaymentStatus)
+                .HasMaxLength(20)
+                .HasDefaultValue("UNPAID")
+                .HasColumnName("payment_status");
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .HasColumnName("status");
+            entity.Property(e => e.Total)
+                .HasColumnType("decimal(12, 2)")
+                .HasColumnName("total");
+            entity.Property(e => e.UserId).HasColumnName("user_id");
 
             entity.HasOne(d => d.User).WithMany(p => p.Orders)
+                .HasForeignKey(d => d.UserId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK__Orders__user_id__403A8C7D");
+                .HasConstraintName("FK_Orders_Users");
         });
 
         modelBuilder.Entity<OrderItem>(entity =>
         {
-            entity.HasKey(e => e.Id).HasName("PK__OrderIte__3213E83F73151BAA");
+            entity.HasIndex(e => e.ItemId, "IX_OrderItems_ItemId");
+
+            entity.HasIndex(e => e.OrderId, "IX_OrderItems_OrderId");
+
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.ItemId).HasColumnName("item_id");
+            entity.Property(e => e.Note)
+                .HasMaxLength(255)
+                .HasColumnName("note");
+            entity.Property(e => e.OrderId).HasColumnName("order_id");
+            entity.Property(e => e.Qty).HasColumnName("qty");
 
             entity.HasOne(d => d.Item).WithMany(p => p.OrderItems)
+                .HasForeignKey(d => d.ItemId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK__OrderItem__item___45F365D3");
+                .HasConstraintName("FK_OrderItems_Items");
 
             entity.HasOne(d => d.Order).WithMany(p => p.OrderItems)
+                .HasForeignKey(d => d.OrderId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK__OrderItem__order__44FF419A");
+                .HasConstraintName("FK_OrderItems_Orders");
         });
 
         modelBuilder.Entity<PaymentTransaction>(entity =>
         {
-            entity.HasKey(e => e.Id).HasName("PK__PaymentT__3213E83FA518BDE6");
+            entity.HasIndex(e => e.OrderId, "IX_PayTrans_OrderId");
 
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())");
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.Action)
+                .HasMaxLength(20)
+                .HasColumnName("action");
+            entity.Property(e => e.ActorId).HasColumnName("actor_id");
+            entity.Property(e => e.Amount)
+                .HasColumnType("decimal(12, 2)")
+                .HasColumnName("amount");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.Method)
+                .HasMaxLength(20)
+                .HasColumnName("method");
+            entity.Property(e => e.OrderId).HasColumnName("order_id");
+            entity.Property(e => e.RefCode)
+                .HasMaxLength(100)
+                .HasColumnName("ref_code");
+            entity.Property(e => e.Status)
+                .HasMaxLength(20)
+                .HasColumnName("status");
 
-            entity.HasOne(d => d.Actor).WithMany(p => p.PaymentTransactions).HasConstraintName("FK__PaymentTr__actor__5535A963");
+            entity.HasOne(d => d.Actor).WithMany(p => p.PaymentTransactions)
+                .HasForeignKey(d => d.ActorId)
+                .HasConstraintName("FK_PaymentTransactions_Users");
 
             entity.HasOne(d => d.Order).WithMany(p => p.PaymentTransactions)
+                .HasForeignKey(d => d.OrderId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK__PaymentTr__order__534D60F1");
+                .HasConstraintName("FK_PaymentTransactions_Orders");
         });
 
         modelBuilder.Entity<PointsLedger>(entity =>
         {
-            entity.HasKey(e => e.Id).HasName("PK__PointsLe__3213E83FF6EFE9D1");
+            entity.ToTable("PointsLedger");
 
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())");
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.Delta).HasColumnName("delta");
+            entity.Property(e => e.OrderId).HasColumnName("order_id");
+            entity.Property(e => e.Points).HasColumnName("points");
+            entity.Property(e => e.Reason)
+                .HasMaxLength(255)
+                .HasColumnName("reason");
+            entity.Property(e => e.UserId).HasColumnName("user_id");
 
-            entity.HasOne(d => d.Order).WithMany(p => p.PointsLedgers).HasConstraintName("FK__PointsLed__order__4F7CD00D");
+            entity.HasOne(d => d.Order).WithMany(p => p.PointsLedgers)
+                .HasForeignKey(d => d.OrderId)
+                .HasConstraintName("FK_PointsLedger_Orders");
 
             entity.HasOne(d => d.User).WithMany(p => p.PointsLedgers)
+                .HasForeignKey(d => d.UserId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK__PointsLed__user___4E88ABD4");
+                .HasConstraintName("FK_PointsLedger_Users");
         });
 
         modelBuilder.Entity<User>(entity =>
         {
-            entity.HasKey(e => e.Id).HasName("PK__Users__3213E83F508FC173");
+            entity.HasIndex(e => e.Email, "UQ_Users_Email")
+                .IsUnique()
+                .HasFilter("([email] IS NOT NULL)");
 
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())");
-            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.HasIndex(e => e.Username, "UQ_Users_Username").IsUnique();
+
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.Allergies)
+                .HasMaxLength(255)
+                .HasColumnName("allergies");
+            entity.Property(e => e.Class)
+                .HasMaxLength(30)
+                .HasColumnName("class");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.Email)
+                .HasMaxLength(150)
+                .HasColumnName("email");
+            entity.Property(e => e.IsActive)
+                .HasDefaultValue(true)
+                .HasColumnName("is_active");
+            entity.Property(e => e.Mssv)
+                .HasMaxLength(30)
+                .HasColumnName("mssv");
+            entity.Property(e => e.Name)
+                .HasMaxLength(120)
+                .HasColumnName("name");
+            entity.Property(e => e.PasswordHash)
+                .HasMaxLength(255)
+                .HasColumnName("password_hash");
+            entity.Property(e => e.Phone)
+                .HasMaxLength(20)
+                .HasColumnName("phone");
+            entity.Property(e => e.Preferences)
+                .HasMaxLength(255)
+                .HasColumnName("preferences");
+            entity.Property(e => e.Role)
+                .HasMaxLength(20)
+                .HasColumnName("role");
+            entity.Property(e => e.Username)
+                .HasMaxLength(100)
+                .HasColumnName("username");
         });
 
         modelBuilder.Entity<UserNotification>(entity =>
         {
-            entity.HasKey(e => e.Id).HasName("PK__UserNoti__3213E83FE608FAF8");
+            entity.HasIndex(e => e.UserId, "IX_UserNoti_UserId");
 
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())");
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.Body)
+                .HasMaxLength(500)
+                .HasColumnName("body");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.IsRead).HasColumnName("is_read");
+            entity.Property(e => e.ReferenceId).HasColumnName("reference_id");
+            entity.Property(e => e.Title)
+                .HasMaxLength(200)
+                .HasColumnName("title");
+            entity.Property(e => e.Type)
+                .HasMaxLength(50)
+                .HasColumnName("type");
+            entity.Property(e => e.UserId).HasColumnName("user_id");
 
             entity.HasOne(d => d.User).WithMany(p => p.UserNotifications)
+                .HasForeignKey(d => d.UserId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
-                .HasConstraintName("FK__UserNotif__user___5812160E");
+                .HasConstraintName("FK_UserNotifications_Users");
         });
 
         modelBuilder.Entity<Voucher>(entity =>
         {
-            entity.HasKey(e => e.Id).HasName("PK__Voucher__3213E83FB6174767");
+            entity.ToTable("Voucher");
 
-            entity.Property(e => e.CreatedAt).HasDefaultValueSql("(sysutcdatetime())");
+            entity.HasIndex(e => e.Code, "UQ_Voucher_Code").IsUnique();
+
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.Code)
+                .HasMaxLength(50)
+                .HasColumnName("code");
+            entity.Property(e => e.CreatedAt)
+                .HasDefaultValueSql("(sysutcdatetime())")
+                .HasColumnName("created_at");
+            entity.Property(e => e.EndAt).HasColumnName("end_at");
+            entity.Property(e => e.Quota).HasColumnName("quota");
+            entity.Property(e => e.StartAt).HasColumnName("start_at");
+            entity.Property(e => e.Type)
+                .HasMaxLength(20)
+                .HasColumnName("type");
+            entity.Property(e => e.Used).HasColumnName("used");
+            entity.Property(e => e.Value)
+                .HasColumnType("decimal(12, 2)")
+                .HasColumnName("value");
         });
 
         OnModelCreatingPartial(modelBuilder);
