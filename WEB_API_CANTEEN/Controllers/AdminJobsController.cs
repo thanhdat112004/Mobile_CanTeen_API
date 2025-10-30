@@ -36,7 +36,7 @@ namespace WEB_API_CANTEEN.Controllers
                     Type = "ORDER_STATUS",
                     ReferenceId = o.Id,
                     IsRead = false,
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.UtcNow                                         
                 });
 
                 _ctx.AuditLogs.Add(new AuditLog
